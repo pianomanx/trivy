@@ -41,7 +41,7 @@ spec:
       selfHeal: true
 ```
 
-The apply the Kubernetes manifest. If you have the manifest locally, you can use the following command through kubectl:
+To apply the Kubernetes manifest, if you have the manifest locally, you can use the following command through kubectl:
 ```
 > kubectl apply -f trivy-operator.yaml
 
@@ -106,9 +106,15 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: trivy-operator
-		namespace: flux-system
-      version: 0.0.5
+        namespace: flux-system
+      version: 0.10.1
   interval: 60m
+  values:
+    trivy:
+      ignoreUnfixed: true
+  install:
+    crds: CreateReplace
+    createNamespace: true
 ```
 
 You can then apply the file to your Kubernetes cluster:

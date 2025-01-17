@@ -4,10 +4,13 @@ import (
 	"archive/tar"
 	"io"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/xerrors"
+
+	"github.com/aquasecurity/trivy/pkg/fanal/utils"
 )
 
 const (
@@ -15,26 +18,22 @@ const (
 	wh  string = ".wh."
 )
 
+var parentDir = ".." + utils.PathSeparator
+
 type LayerTar struct {
-	walker
-	threshold int64
+	skipFiles []string
+	skipDirs  []string
 }
 
-func NewLayerTar(skipFiles, skipDirs []string, slow bool) LayerTar {
-	threshold := defaultSizeThreshold
-	if slow {
-		threshold = slowSizeThreshold
-	}
-
+func NewLayerTar(opt Option) LayerTar {
 	return LayerTar{
-		walker:    newWalker(skipFiles, skipDirs, slow),
-		threshold: threshold,
+		skipFiles: utils.CleanSkipPaths(opt.SkipFiles),
+		skipDirs:  utils.CleanSkipPaths(opt.SkipDirs),
 	}
 }
 
 func (w LayerTar) Walk(layer io.Reader, analyzeFn WalkFunc) ([]string, []string, error) {
-
-	var opqDirs, whFiles, skipDirs []string
+	var opqDirs, whFiles, skippedDirs []string
 	tr := tar.NewReader(layer)
 	for {
 		hdr, err := tr.Next()
@@ -44,9 +43,10 @@ func (w LayerTar) Walk(layer io.Reader, analyzeFn WalkFunc) ([]string, []string,
 			return nil, nil, xerrors.Errorf("failed to extract the archive: %w", err)
 		}
 
-		filePath := hdr.Name
-		filePath = strings.TrimLeft(filepath.Clean(filePath), "/")
-		fileDir, fileName := filepath.Split(filePath)
+		// filepath.Clean cannot be used since tar file paths should be OS-agnostic.
+		filePath := path.Clean(hdr.Name)
+		filePath = strings.TrimLeft(filePath, "/")
+		fileDir, fileName := path.Split(filePath)
 
 		// e.g. etc/.wh..wh..opq
 		if opq == fileName {
@@ -56,19 +56,19 @@ func (w LayerTar) Walk(layer io.Reader, analyzeFn WalkFunc) ([]string, []string,
 		// etc/.wh.hostname
 		if strings.HasPrefix(fileName, wh) {
 			name := strings.TrimPrefix(fileName, wh)
-			fpath := filepath.Join(fileDir, name)
+			fpath := path.Join(fileDir, name)
 			whFiles = append(whFiles, fpath)
 			continue
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if w.shouldSkipDir(filePath) {
-				skipDirs = append(skipDirs, filePath)
+			if utils.SkipPath(filePath, w.skipDirs) {
+				skippedDirs = append(skippedDirs, filePath)
 				continue
 			}
 		case tar.TypeReg:
-			if w.shouldSkipFile(filePath) {
+			if utils.SkipPath(filePath, w.skipFiles) {
 				continue
 			}
 		// symlinks and hardlinks have no content in reader, skip them
@@ -76,11 +76,11 @@ func (w LayerTar) Walk(layer io.Reader, analyzeFn WalkFunc) ([]string, []string,
 			continue
 		}
 
-		if underSkippedDir(filePath, skipDirs) {
+		if underSkippedDir(filePath, skippedDirs) {
 			continue
 		}
 
-		// A symbolic/hard link or regular file will reach here.
+		// A regular file will reach here.
 		if err = w.processFile(filePath, tr, hdr.FileInfo(), analyzeFn); err != nil {
 			return nil, nil, xerrors.Errorf("failed to process the file: %w", err)
 		}
@@ -89,7 +89,7 @@ func (w LayerTar) Walk(layer io.Reader, analyzeFn WalkFunc) ([]string, []string,
 }
 
 func (w LayerTar) processFile(filePath string, tr *tar.Reader, fi fs.FileInfo, analyzeFn WalkFunc) error {
-	cf := newCachedFile(fi.Size(), tr, w.threshold)
+	cf := newCachedFile(fi.Size(), tr)
 	defer func() {
 		// nolint
 		_ = cf.Clean()
@@ -108,7 +108,7 @@ func underSkippedDir(filePath string, skipDirs []string) bool {
 		if err != nil {
 			return false
 		}
-		if !strings.HasPrefix(rel, "../") {
+		if !strings.HasPrefix(rel, parentDir) {
 			return true
 		}
 	}

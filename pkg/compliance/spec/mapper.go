@@ -1,20 +1,20 @@
 package spec
 
 import (
-	"golang.org/x/exp/slices"
+	"slices"
 
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
 // MapSpecCheckIDToFilteredResults map spec check id to filtered scan results
-func MapSpecCheckIDToFilteredResults(result types.Result, checkIDs map[types.SecurityCheck][]string) map[string]types.Results {
+func MapSpecCheckIDToFilteredResults(result types.Result, checkIDs map[types.Scanner][]string) map[string]types.Results {
 	mapCheckByID := make(map[string]types.Results)
 	for _, vuln := range result.Vulnerabilities {
 		// Skip irrelevant check IDs
-		if !slices.Contains(checkIDs[types.SecurityCheckVulnerability], vuln.GetID()) {
+		if !slices.Contains(checkIDs[types.VulnerabilityScanner], vuln.VulnerabilityID) {
 			continue
 		}
-		mapCheckByID[vuln.GetID()] = append(mapCheckByID[vuln.GetID()], types.Result{
+		mapCheckByID[vuln.VulnerabilityID] = append(mapCheckByID[vuln.VulnerabilityID], types.Result{
 			Target:          result.Target,
 			Class:           result.Class,
 			Type:            result.Type,
@@ -23,11 +23,11 @@ func MapSpecCheckIDToFilteredResults(result types.Result, checkIDs map[types.Sec
 	}
 	for _, m := range result.Misconfigurations {
 		// Skip irrelevant check IDs
-		if !slices.Contains(checkIDs[types.SecurityCheckConfig], m.GetID()) {
+		if !slices.Contains(checkIDs[types.MisconfigScanner], m.AVDID) {
 			continue
 		}
 
-		mapCheckByID[m.GetID()] = append(mapCheckByID[m.GetID()], types.Result{
+		mapCheckByID[m.AVDID] = append(mapCheckByID[m.AVDID], types.Result{
 			Target:            result.Target,
 			Class:             result.Class,
 			Type:              result.Type,
@@ -35,18 +35,20 @@ func MapSpecCheckIDToFilteredResults(result types.Result, checkIDs map[types.Sec
 			Misconfigurations: []types.DetectedMisconfiguration{m},
 		})
 	}
+
+	// Evaluate custom IDs
+	mapCustomIDsToFilteredResults(result, checkIDs, mapCheckByID)
+
 	return mapCheckByID
 }
 
 func misconfigSummary(misconfig types.DetectedMisconfiguration) *types.MisconfSummary {
 	rms := types.MisconfSummary{}
 	switch misconfig.Status {
-	case types.StatusPassed:
+	case types.MisconfStatusPassed:
 		rms.Successes = 1
-	case types.StatusFailure:
+	case types.MisconfStatusFailure:
 		rms.Failures = 1
-	case types.StatusException:
-		rms.Exceptions = 1
 	}
 	return &rms
 }

@@ -13,7 +13,10 @@ import (
 	dimage "github.com/docker/docker/api/types/image"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/samber/lo"
 	"golang.org/x/xerrors"
+
+	"github.com/aquasecurity/trivy/pkg/log"
 )
 
 type Image interface {
@@ -89,10 +92,17 @@ func (img *image) ConfigName() (v1.Hash, error) {
 func (img *image) ConfigFile() (*v1.ConfigFile, error) {
 	if len(img.inspect.RootFS.Layers) == 0 {
 		// Podman doesn't return RootFS...
-		if err := img.populateImage(); err != nil {
-			return nil, xerrors.Errorf("unable to populate: %w", err)
-		}
-		return img.Image.ConfigFile()
+		return img.configFile()
+	}
+
+	nonEmptyLayerCount := lo.CountBy(img.history, func(history v1.History) bool {
+		return !history.EmptyLayer
+	})
+
+	if len(img.inspect.RootFS.Layers) != nonEmptyLayerCount {
+		// In cases where empty layers are not correctly determined from the history API.
+		// There are some edge cases where we cannot guess empty layers well.
+		return img.configFile()
 	}
 
 	diffIDs, err := img.diffIDs()
@@ -100,16 +110,25 @@ func (img *image) ConfigFile() (*v1.ConfigFile, error) {
 		return nil, xerrors.Errorf("unable to get diff IDs: %w", err)
 	}
 
-	created, err := time.Parse(time.RFC3339Nano, img.inspect.Created)
-	if err != nil {
-		return nil, xerrors.Errorf("failed parsing created %s: %w", img.inspect.Created, err)
+	var created v1.Time
+	// `Created` field can be empty. Skip parsing to avoid error.
+	// cf. https://github.com/moby/moby/blob/8e96db1c328d0467b015768e42a62c0f834970bb/api/types/types.go#L76-L77
+	if img.inspect.Created != "" {
+		var t time.Time
+		t, err = time.Parse(time.RFC3339Nano, img.inspect.Created)
+		if err != nil {
+			return nil, xerrors.Errorf("failed parsing created %s: %w", img.inspect.Created, err)
+		}
+		created = v1.Time{
+			Time: t,
+		}
 	}
 
 	return &v1.ConfigFile{
 		Architecture:  img.inspect.Architecture,
 		Author:        img.inspect.Author,
 		Container:     img.inspect.Container,
-		Created:       v1.Time{Time: created},
+		Created:       created,
 		DockerVersion: img.inspect.DockerVersion,
 		Config:        img.imageConfig(img.inspect.Config),
 		History:       img.history,
@@ -119,6 +138,17 @@ func (img *image) ConfigFile() (*v1.ConfigFile, error) {
 			DiffIDs: diffIDs,
 		},
 	}, nil
+}
+
+func (img *image) configFile() (*v1.ConfigFile, error) {
+	log.Debug("Saving the container image to a local file to obtain the image config...")
+
+	// Need to fall back into expensive operations like "docker save"
+	// because the config file cannot be generated properly from container engine API for some reason.
+	if err := img.populateImage(); err != nil {
+		return nil, xerrors.Errorf("unable to populate: %w", err)
+	}
+	return img.Image.ConfigFile()
 }
 
 func (img *image) LayerByDiffID(h v1.Hash) (v1.Layer, error) {
@@ -196,9 +226,9 @@ func (img *image) imageConfig(config *container.Config) v1.Config {
 	}
 
 	if len(config.ExposedPorts) > 0 {
-		c.ExposedPorts = map[string]struct{}{}
-		for port := range c.ExposedPorts {
-			c.ExposedPorts[port] = struct{}{}
+		c.ExposedPorts = make(map[string]struct{}) //nolint: gocritic
+		for port := range config.ExposedPorts {
+			c.ExposedPorts[port.Port()] = struct{}{}
 		}
 	}
 
@@ -223,6 +253,8 @@ func configHistory(dhistory []dimage.HistoryResponseItem) []v1.History {
 	return history
 }
 
+// emptyLayer tries to determine if the layer is empty from the history API, but may return a wrong result.
+// The non-empty layers will be compared to diffIDs later so that results can be validated.
 func emptyLayer(history dimage.HistoryResponseItem) bool {
 	if history.Size != 0 {
 		return false

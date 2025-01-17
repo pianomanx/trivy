@@ -1,24 +1,24 @@
 package table
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"slices"
 	"strings"
-	"sync"
 
 	"github.com/fatih/color"
-	"golang.org/x/exp/slices"
-
-	"github.com/aquasecurity/tml"
 
 	"github.com/aquasecurity/table"
+	"github.com/aquasecurity/tml"
 	dbTypes "github.com/aquasecurity/trivy-db/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
 var (
-	SeverityColor = []func(a ...interface{}) string{
+	SeverityColor = []func(a ...any) string{
 		color.New(color.FgCyan).SprintFunc(),   // UNKNOWN
 		color.New(color.FgBlue).SprintFunc(),   // LOW
 		color.New(color.FgYellow).SprintFunc(), // MEDIUM
@@ -35,8 +35,8 @@ type Writer struct {
 	// Show dependency origin tree
 	Tree bool
 
-	// We have to show a message once about using the '-format json' subcommand to get the full pkgPath
-	ShowMessageOnce *sync.Once
+	// Show suppressed findings
+	ShowSuppressed bool
 
 	// For misconfigurations
 	IncludeNonFailures bool
@@ -52,7 +52,8 @@ type Renderer interface {
 }
 
 // Write writes the result on standard output
-func (tw Writer) Write(report types.Report) error {
+func (tw Writer) Write(_ context.Context, report types.Report) error {
+
 	for _, result := range report.Results {
 		// Not display a table of custom resources
 		if result.Class == types.ClassCustom {
@@ -72,7 +73,7 @@ func (tw Writer) write(result types.Result) {
 	switch {
 	// vulnerability
 	case result.Class == types.ClassOSPkg || result.Class == types.ClassLangPkg:
-		renderer = NewVulnerabilityRenderer(result, tw.isOutputToTerminal(), tw.Tree, tw.Severities)
+		renderer = NewVulnerabilityRenderer(result, tw.isOutputToTerminal(), tw.Tree, tw.ShowSuppressed, tw.Severities)
 	// misconfiguration
 	case result.Class == types.ClassConfig:
 		renderer = NewMisconfigRenderer(result, tw.Severities, tw.Trace, tw.IncludeNonFailures, tw.isOutputToTerminal())
@@ -131,6 +132,11 @@ func summarize(specifiedSeverities []dbTypes.Severity, severityCount map[string]
 }
 
 func IsOutputToTerminal(output io.Writer) bool {
+	if runtime.GOOS == "windows" {
+		// if its windows, we don't support formatting
+		return false
+	}
+
 	if output != os.Stdout {
 		return false
 	}

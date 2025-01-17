@@ -1,8 +1,8 @@
 package report
 
 import (
+	"context"
 	"io"
-	"sync"
 
 	"golang.org/x/xerrors"
 
@@ -26,23 +26,22 @@ const (
 	IssuesColumn      = "Issues"
 )
 
-func (tw TableWriter) columns() []string {
-	return []string{ControlIDColumn, SeverityColumn, ControlNameColumn, StatusColumn, IssuesColumn}
-}
-
-func (tw TableWriter) Write(report *ComplianceReport) error {
+func (tw TableWriter) Write(ctx context.Context, report *ComplianceReport) error {
 	switch tw.Report {
 	case allReport:
-		t := pkgReport.Writer{Output: tw.Output, Severities: tw.Severities, ShowMessageOnce: &sync.Once{}}
+		t := pkgReport.Writer{
+			Output:     tw.Output,
+			Severities: tw.Severities,
+		}
 		for _, cr := range report.Results {
 			r := types.Report{Results: cr.Results}
-			err := t.Write(r)
+			err := t.Write(ctx, r)
 			if err != nil {
 				return err
 			}
 		}
 	case summaryReport:
-		writer := NewSummaryWriter(tw.Output, tw.Severities, tw.columns())
+		writer := NewSummaryWriter(tw.Output)
 		return writer.Write(report)
 	default:
 		return xerrors.Errorf(`report %q not supported. Use "summary" or "all"`, tw.Report)

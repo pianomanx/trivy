@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/aquasecurity/trivy/pkg/compliance/report"
 	"github.com/aquasecurity/trivy/pkg/types"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestJSONWriter_Write(t *testing.T) {
@@ -26,7 +26,10 @@ func TestJSONWriter_Write(t *testing.T) {
 				Results: types.Results{
 					{
 						Misconfigurations: []types.DetectedMisconfiguration{
-							{AVDID: "AVD-KSV012", Status: types.StatusFailure},
+							{
+								AVDID:  "AVD-KSV012",
+								Status: types.MisconfStatusFailure,
+							},
 						},
 					},
 				},
@@ -38,7 +41,10 @@ func TestJSONWriter_Write(t *testing.T) {
 				Results: types.Results{
 					{
 						Misconfigurations: []types.DetectedMisconfiguration{
-							{AVDID: "AVD-KSV013", Status: types.StatusFailure},
+							{
+								AVDID:  "AVD-KSV013",
+								Status: types.MisconfStatusFailure,
+							},
 						},
 					},
 				},
@@ -69,7 +75,10 @@ func TestJSONWriter_Write(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := new(bytes.Buffer)
-			tr := report.JSONWriter{Report: tt.reportType, Output: buf}
+			tr := report.JSONWriter{
+				Report: tt.reportType,
+				Output: buf,
+			}
 			err := tr.Write(tt.input)
 			require.NoError(t, err)
 

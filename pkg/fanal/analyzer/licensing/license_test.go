@@ -25,7 +25,7 @@ func Test_licenseAnalyzer_Analyze(t *testing.T) {
 				Licenses: []types.LicenseFile{
 					{
 						Type:     types.LicenseTypeHeader,
-						FilePath: "/testdata/licensed.c",
+						FilePath: "testdata/licensed.c",
 						Findings: []types.LicenseFinding{
 							{
 								Name:       "AGPL-3.0",
@@ -53,7 +53,7 @@ func Test_licenseAnalyzer_Analyze(t *testing.T) {
 			fi, err := f.Stat()
 			require.NoError(t, err)
 
-			a := licenseFileAnalyzer{}
+			a := newLicenseFileAnalyzer()
 			got, err := a.Analyze(context.TODO(), analyzer.AnalysisInput{
 				FilePath: tt.filePath,
 				Content:  f,

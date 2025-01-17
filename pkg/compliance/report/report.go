@@ -1,25 +1,24 @@
 package report
 
 import (
+	"context"
 	"io"
 
 	"golang.org/x/xerrors"
 
 	dbTypes "github.com/aquasecurity/trivy-db/pkg/types"
 	"github.com/aquasecurity/trivy/pkg/compliance/spec"
+	iacTypes "github.com/aquasecurity/trivy/pkg/iac/types"
 	"github.com/aquasecurity/trivy/pkg/types"
 )
 
 const (
 	allReport     = "all"
 	summaryReport = "summary"
-
-	tableFormat = "table"
-	jsonFormat  = "json"
 )
 
 type Option struct {
-	Format        string
+	Format        types.Format
 	Report        string
 	Output        io.Writer
 	Severities    []dbTypes.Severity
@@ -40,7 +39,7 @@ type ControlCheckResult struct {
 	ID            string
 	Name          string
 	Description   string
-	DefaultStatus spec.ControlStatus `json:",omitempty"`
+	DefaultStatus iacTypes.ControlStatus `json:",omitempty"`
 	Severity      string
 	Results       types.Results
 }
@@ -65,20 +64,23 @@ type Writer interface {
 	Write(ComplianceReport) error
 }
 
-// Write writes the results in the give format
-func Write(report *ComplianceReport, option Option) error {
+// Write writes the results in the given format
+func Write(ctx context.Context, report *ComplianceReport, option Option) error {
 	switch option.Format {
-	case jsonFormat:
-		jwriter := JSONWriter{Output: option.Output, Report: option.Report}
+	case types.FormatJSON:
+		jwriter := JSONWriter{
+			Output: option.Output,
+			Report: option.Report,
+		}
 		return jwriter.Write(report)
-	case tableFormat:
+	case types.FormatTable:
 		if !report.empty() {
 			complianceWriter := &TableWriter{
 				Output:     option.Output,
 				Report:     option.Report,
 				Severities: option.Severities,
 			}
-			err := complianceWriter.Write(report)
+			err := complianceWriter.Write(ctx, report)
 			if err != nil {
 				return err
 			}
@@ -94,8 +96,8 @@ func (r ComplianceReport) empty() bool {
 }
 
 // buildControlCheckResults create compliance results data
-func buildControlCheckResults(checksMap map[string]types.Results, controls []spec.Control) []*ControlCheckResult {
-	complianceResults := make([]*ControlCheckResult, 0)
+func buildControlCheckResults(checksMap map[string]types.Results, controls []iacTypes.Control) []*ControlCheckResult {
+	var complianceResults []*ControlCheckResult
 	for _, control := range controls {
 		var results types.Results
 		for _, c := range control.Checks {
@@ -114,14 +116,14 @@ func buildControlCheckResults(checksMap map[string]types.Results, controls []spe
 }
 
 // buildComplianceReportResults create compliance results data
-func buildComplianceReportResults(checksMap map[string]types.Results, spec spec.Spec) *ComplianceReport {
-	controlCheckResult := buildControlCheckResults(checksMap, spec.Controls)
+func buildComplianceReportResults(checksMap map[string]types.Results, s iacTypes.Spec) *ComplianceReport {
+	controlCheckResult := buildControlCheckResults(checksMap, s.Controls)
 	return &ComplianceReport{
-		ID:               spec.ID,
-		Title:            spec.Title,
-		Description:      spec.Description,
-		Version:          spec.Version,
-		RelatedResources: spec.RelatedResources,
+		ID:               s.ID,
+		Title:            s.Title,
+		Description:      s.Description,
+		Version:          s.Version,
+		RelatedResources: s.RelatedResources,
 		Results:          controlCheckResult,
 	}
 }

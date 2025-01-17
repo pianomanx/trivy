@@ -28,7 +28,7 @@ jobs:
             ci
             chore
             revert
-            BREAKING
+            release
 
           scopes: |
             vuln
@@ -44,9 +44,11 @@ jobs:
             k8s
             aws
             vm
+            plugin
 
             alpine
             wolfi
+            chainguard
             redhat
             alma
             rocky
@@ -58,6 +60,7 @@ jobs:
             suse
             photon
             distroless
+            windows
 
             ruby
             php
@@ -68,7 +71,13 @@ jobs:
             java
             go
             c
-            c++
+            c\+\+
+            elixir
+            dart
+            swift
+            bitnami
+            conda
+            julia
 
             os
             lang
@@ -89,8 +98,10 @@ jobs:
             cyclonedx
             spdx
             purl
+            vex
 
             helm
             report
             db
+            parser
             deps

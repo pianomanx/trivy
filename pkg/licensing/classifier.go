@@ -3,6 +3,7 @@ package licensing
 import (
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 
 	classifier "github.com/google/licenseclassifier/v2"
@@ -11,24 +12,28 @@ import (
 
 	"github.com/aquasecurity/trivy/pkg/fanal/types"
 	"github.com/aquasecurity/trivy/pkg/log"
+	"github.com/aquasecurity/trivy/pkg/set"
 )
 
-var cf *classifier.Classifier
-var classifierOnce sync.Once
+var (
+	cf             *classifier.Classifier
+	classifierOnce sync.Once
+	m              sync.Mutex
+)
 
 func initGoogleClassifier() error {
 	// Initialize the default classifier once.
 	// This loading is expensive and should be called only when the license classification is needed.
 	var err error
 	classifierOnce.Do(func() {
-		log.Logger.Debug("Loading the the default license classifier...")
+		log.Debug("Loading the default license classifier...")
 		cf, err = assets.DefaultClassifier()
 	})
 	return err
 }
 
 // Classify detects and classifies the license found in a file
-func Classify(filePath string, r io.Reader) (*types.LicenseFile, error) {
+func Classify(filePath string, r io.Reader, confidenceLevel float64) (*types.LicenseFile, error) {
 	content, err := io.ReadAll(r)
 	if err != nil {
 		return nil, xerrors.Errorf("unable to read a license file %q: %w", filePath, err)
@@ -37,22 +42,27 @@ func Classify(filePath string, r io.Reader) (*types.LicenseFile, error) {
 		return nil, err
 	}
 
-	var findings []types.LicenseFinding
+	var findings types.LicenseFindings
 	var matchType types.LicenseType
-	seen := map[string]struct{}{}
+	seen := set.New[string]()
+
+	// cf.Match is not thread safe
+	m.Lock()
 
 	// Use 'github.com/google/licenseclassifier' to find licenses
 	result := cf.Match(cf.Normalize(content))
 
+	m.Unlock()
+
 	for _, match := range result.Matches {
-		if match.Confidence <= 0.9 {
+		if match.Confidence <= confidenceLevel {
 			continue
 		}
-		if _, ok := seen[match.Name]; ok {
+		if seen.Contains(match.Name) {
 			continue
 		}
 
-		seen[match.Name] = struct{}{}
+		seen.Append(match.Name)
 
 		switch match.MatchType {
 		case "Header":
@@ -68,6 +78,7 @@ func Classify(filePath string, r io.Reader) (*types.LicenseFile, error) {
 			Link:       licenseLink,
 		})
 	}
+	sort.Sort(findings)
 	return &types.LicenseFile{
 		Type:     matchType,
 		FilePath: filePath,
